@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Displate vs Zombies</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #f5f5f5;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #game-container {
+      position: relative;
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      background: linear-gradient(#222, #000);
+    }
+
+    #ui {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      padding: 6px 10px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    #ui div {
+      margin-bottom: 2px;
+    }
+
+    #ui .hint {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game" width="900" height="520"></canvas>
+    <div id="ui">
+      <div>Score: <span id="score">0</span></div>
+      <div>Level: <span id="level">1</span></div>
+      <div class="hint">Click/tap to throw a Displate at zombies →</div>
+    </div>
+  </div>
+<script>
+
+  // Load Displate images from folder
+const displateImgs = [];
+const displateSources = [
+  "Displates images/img1.jpg",
+  "Displates images/img2.jpg",
+  "Displates images/img3.jpg"
+];
+
+displateSources.forEach(src => {
+  const img = new Image();
+  img.src = src;
+  displateImgs.push(img);
+});
+
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  const scoreEl = document.getElementById("score");
+  const levelEl = document.getElementById("level");
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // Player (Displate origin)
+  const player = {
+    x: 120,
+    y: H - 80,
+    radius: 24
+  };
+
+  // Game state
+  let displates = [];
+  let zombies = [];
+  let score = 0;
+  let level = 1;
+  let lastTime = 0;
+
+  // Tuning
+  const DISC_SPEED = 900;   // px per second
+  const GRAVITY    = 1500;  // px per second²
+
+  const playerImg = new Image();
+playerImg.src = "player.png"; // file in same folder
+const PLAYER_SCALE = 0.35;    // tweak size (0.3–0.5)
+
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
+
+  function resetLevel() {
+    zombies = [];
+    const count = 4 + level;
+    for (let i = 0; i < count; i++) {
+      const size = rand(40, 70);
+      const x = rand(W * 0.55, W * 0.9);
+      const y = rand(80, H - 120);
+      zombies.push({
+        x,
+        y,
+        w: size,
+        h: size * 1.4,
+        vx: rand(-90, 90), // px per second for sway
+        dir: Math.random() < 0.5 ? -1 : 1,
+        alive: true
+      });
+    }
+  }
+
+function spawnDisplate(targetX, targetY) {
+  const dx = targetX - player.x;
+  const dy = targetY - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+
+  const vx = (dx / len) * DISC_SPEED;
+  const vy = (dy / len) * DISC_SPEED;
+
+  displates.push({
+    // roughly his right hand
+    x: player.x + 90,
+    y: player.y - 70,
+    vx,
+    vy,
+    radius: 55, // important: used for cleanup + collision
+    life: 0,
+    img: displateImgs[Math.floor(Math.random() * displateImgs.length)],
+    rotation: 0,
+    rotSpeed: (Math.random() * 4 + 2) * (Math.random() < 0.5 ? -1 : 1)
+  });
+}
+
+  function circleRectCollision(cx, cy, r, rx, ry, rw, rh) {
+    const nearestX = Math.max(rx, Math.min(cx, rx + rw));
+    const nearestY = Math.max(ry, Math.min(cy, ry + rh));
+    const dx = cx - nearestX;
+    const dy = cy - nearestY;
+    return dx * dx + dy * dy <= r * r;
+  }
+
+  function getCanvasPos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if (evt.touches && evt.touches[0]) {
+      clientX = evt.touches[0].clientX;
+      clientY = evt.touches[0].clientY;
+    } else {
+      clientX = evt.clientX;
+      clientY = evt.clientY;
+    }
+    return {
+      x: ((clientX - rect.left) / rect.width) * W,
+      y: ((clientY - rect.top) / rect.height) * H
+    };
+  }
+
+  function handleFire(evt) {
+    evt.preventDefault();
+    const pos = getCanvasPos(evt);
+    spawnDisplate(pos.x, pos.y);
+  }
+
+  canvas.addEventListener("click", handleFire);
+  canvas.addEventListener("touchstart", handleFire, { passive: false });
+
+  function update(dt) {
+    // Displates
+    displates.forEach(d => {
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.vy += GRAVITY * dt; // gravity pulls down
+      d.life += dt;
+      d.rotation += d.rotSpeed * dt;
+    });
+
+    // Remove old / off-screen
+    displates = displates.filter(
+  d =>
+    d.x > -200 &&
+    d.x < W + 200 &&
+    d.y < H + 300 &&
+    d.life < 5
+);
+
+    // Zombies sway
+    zombies.forEach(z => {
+      if (!z.alive) return;
+      z.x += z.vx * z.dir * dt;
+      if (z.x < W * 0.5 || z.x > W - z.w - 10) {
+        z.dir *= -1;
+      }
+    });
+
+    // Collisions
+    displates.forEach(d => {
+      zombies.forEach(z => {
+        if (!z.alive) return;
+        if (circleRectCollision(d.x, d.y, d.radius, z.x, z.y, z.w, z.h)) {
+          z.alive = false;
+          score += 10;
+        }
+      });
+    });
+
+    scoreEl.textContent = score;
+
+    if (zombies.length > 0 && zombies.every(z => !z.alive)) {
+      level++;
+      levelEl.textContent = level;
+      resetLevel();
+    }
+  }
+
+  function drawPlayer() {
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  if (playerImg.complete && playerImg.naturalWidth) {
+    const w = playerImg.naturalWidth * PLAYER_SCALE;
+    const h = playerImg.naturalHeight * PLAYER_SCALE;
+    // draw so feet sit on the ground at player.y
+    ctx.drawImage(playerImg, -w / 2, -h, w, h);
+  } else {
+    // fallback while image loads
+    ctx.fillStyle = "#ccc";
+    ctx.beginPath();
+    ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#888";
+    ctx.fillRect(-18, player.radius - 4, 36, 10);
+  }
+
+  ctx.restore();
+}
+
+function drawDisplates() {
+  displates.forEach(d => {
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.rotation);
+
+    if (d.img && d.img.complete && d.img.naturalWidth) {
+      const targetWidth = 110;                      // visible size
+      const scale = targetWidth / d.img.naturalWidth;
+      const w = d.img.naturalWidth * scale;
+      const h = d.img.naturalHeight * scale;
+
+      ctx.drawImage(d.img, -w / 2, -h / 2, w, h);
+    } else {
+      // fallback while loading
+      ctx.fillStyle = "#ff4c29";
+      ctx.fillRect(-20, -30, 40, 60);
+    }
+
+    ctx.restore();
+  });
+}
+
+  function drawZombies() {
+    zombies.forEach(z => {
+      if (!z.alive) return;
+      ctx.save();
+      ctx.translate(z.x, z.y);
+
+      ctx.fillStyle = "#3b7f3b";
+      ctx.fillRect(0, 0, z.w, z.h);
+
+      const headH = z.h * 0.35;
+      ctx.fillStyle = "#4caf50";
+      ctx.fillRect(z.w * 0.15, -headH, z.w * 0.7, headH);
+
+      ctx.fillStyle = "#fff";
+      const eyeY = -headH + headH * 0.4;
+      ctx.fillRect(z.w * 0.25, eyeY, 10, 8);
+      ctx.fillRect(z.w * 0.55, eyeY, 10, 8);
+
+      ctx.fillStyle = "#000";
+      ctx.fillRect(z.w * 0.28, eyeY + 2, 4, 4);
+      ctx.fillRect(z.w * 0.58, eyeY + 2, 4, 4);
+
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(z.w * 0.3, -headH + headH * 0.7);
+      ctx.lineTo(z.w * 0.7, -headH + headH * 0.75);
+      ctx.stroke();
+
+      ctx.restore();
+    });
+  }
+
+  function drawGround() {
+    ctx.fillStyle = "#151515";
+    ctx.fillRect(0, H - 60, W, 60);
+    ctx.fillStyle = "#202020";
+    ctx.fillRect(0, H - 62, W, 2);
+  }
+
+  function drawBackground() {
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#181818";
+    for (let i = 0; i < 5; i++) {
+      const y = (H / 6) * i;
+      ctx.fillRect(0, y, W, 2);
+    }
+    ctx.beginPath();
+    ctx.arc(W - 100, 80, 26, 0, Math.PI * 2);
+    ctx.fillStyle = "#ddd";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(W - 90, 75, 26, 0, Math.PI * 2);
+    ctx.fillStyle = "#111";
+    ctx.fill();
+  }
+
+  function render() {
+    drawBackground();
+    drawGround();
+    drawZombies();
+    drawPlayer();
+    drawDisplates();
+  }
+
+  function loop(timestamp) {
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+    lastTime = timestamp;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  resetLevel();
+  requestAnimationFrame(ts => {
+    lastTime = ts;
+    loop(ts);
+  });
+</script>
+</body>
+</html>
